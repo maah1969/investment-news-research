@@ -1,17 +1,18 @@
 import os
 import datetime
-import requests
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from groq import Groq
 from docx import Document
 import smtplib
 from email.message import EmailMessage
+from googleapiclient.discovery import build
+from youtube_transcript_api import YouTubeTranscriptApi
 
 # Load environment variables
 load_dotenv()
 
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
@@ -22,58 +23,90 @@ def get_groq_client():
         print("Error: GROQ_API_KEY environment variable not set.")
         return None
     return Groq(api_key=GROQ_API_KEY)
-
-def fetch_top_business_news():
-    """Fetch top business headlines from the US using News API."""
-    if not NEWS_API_KEY:
-        print("Error: NEWS_API_KEY environment variable not set.")
-        return None
         
-    url = f"https://newsapi.org/v2/top-headlines?country=us&category=business&apiKey={NEWS_API_KEY}"
+def fetch_top_trending_investment_videos():
+    """
+    Search YouTube for the top trending English investment videos 
+    published in the last 48 hours.
+    """
+    if not YOUTUBE_API_KEY:
+        print("Error: YOUTUBE_API_KEY environment variable not set.")
+        return None
+
+    youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+    
+    # Target videos from the last 48 hours. YouTube API requires RFC 3339 formatted date-time value (1970-01-01T00:00:00Z)
+    published_after = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=48)).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("status") == "ok" and data.get("articles"):
-            # Return the top 3 articles to avoid overwhelming the prompt
-            return data["articles"][:3]
-        else:
-            print("No articles found or API error:", data)
+        search_response = youtube.search().list(
+            q="investing OR stock market OR finance news",
+            part="id,snippet",
+            maxResults=10,
+            order="viewCount",
+            publishedAfter=published_after,
+            relevanceLanguage="en",
+            type="video"
+        ).execute()
+
+        if not search_response.get("items"):
+            print("No trending investment videos found.")
             return None
+            
+        return search_response["items"]
+        
     except Exception as e:
-        print(f"Error fetching news: {e}")
+        print(f"Error fetching YouTube data: {e}")
         return None
 
-def generate_ripple_effect_report(client, articles):
-    """Generate a ripple effect analysis report using Groq (Llama 3)."""
-    if not articles:
-        return "No news articles to analyze."
+def get_video_transcript(video_id):
+    """Retrieve the English transcript for a given YouTube video ID."""
+    try:
+        # Try to get English transcript
+        transcript_list = YouTubeTranscriptApi().list(video_id)
+        transcript = transcript_list.find_transcript(['en'])
+        fetched_transcript = transcript.fetch()
         
-    # Prepare the prompt with the news articles
-    news_text = ""
-    for i, article in enumerate(articles, 1):
-        source = article.get('source', {}).get('name', 'Unknown Source')
-        title = article.get('title', 'No Title')
-        description = article.get('description', 'No Description')
-        news_text += f"情報{i}:\n[情報源]: {source}\n[タイトル]: {title}\n[概要]: {description}\n\n"
+        # Combine text from all transcript chunks
+        full_text = " ".join([snippet.text for snippet in fetched_transcript.snippets])
+        
+        # Limit the transcript length strictly to avoid exceeding Groq Llama 3 token limits (approx 8k tokens / ~30k chars limit)
+        max_chars = 20000 
+        if len(full_text) > max_chars:
+            print(f"Transcript too long ({len(full_text)} chars). Truncating to {max_chars} chars.")
+            full_text = full_text[:max_chars] + "\n...[Transcript Truncated]..."
+            
+        return full_text
+    except Exception as e:
+        print(f"Error fetching transcript for video {video_id}: {e}")
+        return None
+
+def generate_ripple_effect_report(client, video_info, transcript_text):
+    """Generate a ripple effect analysis report using Groq."""
+    if not transcript_text:
+        return "トランスクリプト（文字起こし）が取得できなかったため、分析をスキップしました。"
         
     prompt = f"""
-あなたは優秀な証券アナリストです。以下の米国の最新ビジネス・投資情報を読み、
-「風が吹けば桶屋が儲かる」という視点で、これらの情報が日本のどの業界や銘柄に予期せぬ恩恵（波及効果）をもたらすか、具体的なシナリオを日本語で論理的に解説するリサーチレポートを作成してください。
+あなたは優秀な証券アナリストです。以下の海外の著名な最新投資YouTube動画の内容（英語のトランスクリプト）を読み、
+「風が吹けば桶屋が儲かる」という視点で、この動画で語られている内容が日本のどの業界や企業に予期せぬ恩恵（波及効果）をもたらすか、具体的なシナリオを日本語で論理的に解説するディープなリサーチレポートを作成してください。
 
-要約を作成する際は、各情報源（メディア名、ポッドキャスト名や発言中の個人名）を明示した上で、「具体的な数値」「企業のアクション」「専門家の見解」を必ず抽出して含めてください。
+要約を作成する際は、情報源（チャンネル名、動画タイトル）を明示した上で、動画内で語られている「具体的な数値」「企業のアクション」「専門家・配信者の見解」を必ず抽出して含めてください。
 
-【取得した情報】
-{news_text}
+【情報源】
+チャンネル名: {video_info.get('channel', 'Unknown Channel')}
+動画タイトル: {video_info.get('title', 'Unknown Title')}
+
+【英語トランスクリプト（要約対象）】
+{transcript_text}
 
 【レポートのフォーマット】
 # グローバルニュース・波及効果分析レポート
 
-## 本日のハイライト（情報要約）
-（取得した情報の要約。各情報源を明記し、「具体的な数値」「企業のアクション」「専門家の見解」を必ず含めること）
+## 本日のトップトレンド動画（情報要約）
+（動画の要約。チャンネル名・動画タイトルを明記し、「具体的な数値」「企業のアクション」「専門家の見解」を必ず含めること）
 
 ## 波及効果シナリオ（風が吹けば桶屋が儲かる）
-（ニュースの事象が、どのような連鎖反応を経て日本の特定の業界・企業に影響するかをステップ・バイ・ステップで解説。最低2つのシナリオを提示してください。）
+（動画で語られた事象が、どのような連鎖反応を経て日本の特定の業界・企業に影響するかをステップ・バイ・ステップで解説。深い考察を含む最低2つのシナリオを提示してください。）
 
 ## 注目すべき日本株セクター
 （恩恵を受ける可能性のある具体的な日本の業種やテーマ）
@@ -171,7 +204,7 @@ def send_email_with_attachment(filepath, filename):
 
 def fetch_and_process_news():
     """
-    Fetch international finance news and process it for retail investors using Groq.
+    Fetch trending international finance YouTube video and process it for retail investors using Groq.
     """
     jst_time = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
     date_str = jst_time.strftime("%Y%m%d")
@@ -188,24 +221,53 @@ def fetch_and_process_news():
             target_dir = "output"
             os.makedirs(target_dir, exist_ok=True)
 
-    print(f"[{jst_time}] Starting news research and plot generation...")
+    print(f"[{jst_time}] Starting YouTube video research and plot generation...")
     
     client = get_groq_client()
     if not client:
         return
         
-    print("1. Fetching US business news...")
-    articles = fetch_top_business_news()
+    print("1. Fetching top trending English investment YouTube videos...")
+    videos = fetch_top_trending_investment_videos()
     
-    if not articles:
-        print("Stopping process: Could not fetch news.")
+    if not videos:
+        print("Stopping process: Could not find any trending videos.")
         return
         
-    print(f"-> Successfully fetched {len(articles)} articles.")
-    print("2. Generating ripple effect report using Groq...")
-    report_text = generate_ripple_effect_report(client, articles)
+    video_info = None
+    transcript_text = None
     
-    print("3. Generating 15-character filename summary...")
+    print("2. Looking for a video with an English transcript...")
+    for item in videos:
+        current_info = {
+            "video_id": item["id"]["videoId"],
+            "title": item["snippet"]["title"],
+            "channel": item["snippet"]["channelTitle"],
+            "description": item["snippet"]["description"],
+            "published_at": item["snippet"]["publishedAt"]
+        }
+        
+        safe_title = current_info['title'].encode('cp932', 'replace').decode('cp932')
+        safe_channel = current_info['channel'].encode('cp932', 'replace').decode('cp932')
+        print(f"-> Trying video: {safe_title} by {safe_channel}")
+        
+        current_transcript = get_video_transcript(current_info['video_id'])
+        if current_transcript:
+            print(f"-> Successfully fetched English transcript!")
+            video_info = current_info
+            transcript_text = current_transcript
+            break
+        else:
+            print("-> Skipped (transcript unavailable or not in English)")
+            
+    if not video_info or not transcript_text:
+        print("Stopping process: Could not fetch video transcript for any of the top videos.")
+        return
+        
+    print("3. Generating ripple effect report using Groq...")
+    report_text = generate_ripple_effect_report(client, video_info, transcript_text)
+    
+    print("4. Generating 15-character filename summary...")
     summary = generate_filename_summary(client, report_text)
     
     # Generate filename (e.g., 20260315_01_イラン原油高.docx)
