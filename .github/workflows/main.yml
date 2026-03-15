@@ -1,9 +1,6 @@
 name: Daily News Research
 
 on:
-  schedule:
-    # 毎日 日本時間 12:00 (UTC 03:00) に実行
-    - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:
