@@ -70,8 +70,8 @@ def get_video_transcript(video_id):
         # Combine text from all transcript chunks
         full_text = " ".join([snippet.text for snippet in fetched_transcript.snippets])
         
-        # Limit the transcript length strictly to avoid exceeding Groq Llama 3 token limits (approx 8k tokens / ~30k chars limit)
-        max_chars = 20000 
+        # Limit the transcript length strictly to avoid exceeding Groq Llama 3 API token limits when batching multiple videos
+        max_chars = 3000 
         if len(full_text) > max_chars:
             print(f"Transcript too long ({len(full_text)} chars). Truncating to {max_chars} chars.")
             full_text = full_text[:max_chars] + "\n...[Transcript Truncated]..."
@@ -81,39 +81,36 @@ def get_video_transcript(video_id):
         print(f"Error fetching transcript for video {video_id}: {e}")
         return None
 
-def generate_ripple_effect_report(client, video_info, transcript_text):
-    """Generate a ripple effect analysis report using Groq."""
-    if not transcript_text:
-        return "トランスクリプト（文字起こし）が取得できなかったため、分析をスキップしました。"
+def generate_top10_report(client, videos_context):
+    """Generate a top 10 YouTube video summary report using Groq."""
+    if not videos_context:
+        return "動画データが取得できなかったため、レポート生成をスキップしました。"
         
     prompt = f"""
-あなたは優秀な証券アナリストです。以下の海外の著名な最新投資YouTube動画の内容（英語のトランスクリプト）を読み、
-「風が吹けば桶屋が儲かる」という視点で、この動画で語られている内容が日本のどの業界や企業に予期せぬ恩恵（波及効果）をもたらすか、具体的なシナリオを日本語で論理的に解説するディープなリサーチレポートを作成してください。
+あなたは優秀な証券アナリストです。以下の海外の最新投資YouTube動画トップ10の内容（タイトル、説明文、英語トランスクリプトの抜粋）を読み、アクセスランキング順にそれぞれ日本語で詳細に要約したレポートを作成してください。
 
-要約を作成する際は、情報源（チャンネル名、動画タイトル）を明示した上で、動画内で語られている「具体的な数値」「企業のアクション」「専門家・配信者の見解」を必ず抽出して含めてください。
+【重要な指示】
+1. トランスクリプト情報が不足しており、「具体的な内容」や「専門家・配信者の見解」が読み取れない動画については、レポートへの記載を一切行わず、完全に除外（スキップ）してください。
+2. 要約を作成する動画については、内容を丁寧に拾い上げ、要約の文章量を以前の3倍程度（1動画あたり300〜400文字程度）に詳細に膨らませてください。「具体的な数値」「登場した銘柄名」「市場の背景」「配信者の主張の根拠」などをしっかり盛り込み、読み応えのある構成にしてください。
+3. 「風が吹けば桶屋が儲かる」のような独自の将来予測や独自の波及効果の分析は絶対に含めないでください。あくまで動画内で語られている内容のみを詳細に要約してください。
 
-【情報源】
-チャンネル名: {video_info.get('channel', 'Unknown Channel')}
-動画タイトル: {video_info.get('title', 'Unknown Title')}
-
-【英語トランスクリプト（要約対象）】
-{transcript_text}
+【動画データ（TOP 10候補）】
+{videos_context}
 
 【レポートのフォーマット】
-# グローバルニュース・波及効果分析レポート
+# 英語圏 投資系YouTube動画 詳細要約レポート
 
-## 本日のトップトレンド動画（情報要約）
-（動画の要約。チャンネル名・動画タイトルを明記し、「具体的な数値」「企業のアクション」「専門家の見解」を必ず含めること）
+## 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
+（動画の詳細な要約：情報が十分に読み取れる動画のみをピックアップし、約300〜400文字のボリュームで充実させて記述）
 
-## 波及効果シナリオ（風が吹けば桶屋が儲かる）
-（動画で語られた事象が、どのような連鎖反応を経て日本の特定の業界・企業に影響するかをステップ・バイ・ステップで解説。深い考察を含む最低2つのシナリオを提示してください。）
+## 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
+（動画の詳細な要約...同様に記載）
 
-## 注目すべき日本株セクター
-（恩恵を受ける可能性のある具体的な日本の業種やテーマ）
+...（以下、同様に情報が不明瞭なものを除外した上でリストアップしてください）
 """
     
     try:
-        # Use Llama 3 8B or 70B model for fast generation
+        # Use Llama 3 70B model for fast generation
         chat_completion = client.chat.completions.create(
             messages=[
                 {
@@ -122,7 +119,7 @@ def generate_ripple_effect_report(client, video_info, transcript_text):
                 }
             ],
             model="llama-3.3-70b-versatile",
-            temperature=0.7,
+            temperature=0.4,
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
@@ -155,7 +152,7 @@ def generate_filename_summary(client, text_content):
         return summary[:15]
     except Exception as e:
         print(f"Error generating summary: {e}")
-        return "ニュース波及効果まとめ"
+        return "海外YouTubeトップ10"
 
 def save_as_docx(report_text, filepath):
     """Save the markdown-like text to a nice Word document."""
@@ -179,7 +176,7 @@ def send_email_with_attachment(filepath, filename):
         return
 
     msg = EmailMessage()
-    msg['Subject'] = f"【自動リサーチ】本日のニュース分析 ({filename})"
+    msg['Subject'] = f"【自動リサーチ】海外投資YouTubeトップ10要約 ({filename})"
     msg['From'] = GMAIL_ADDRESS
     msg['To'] = GMAIL_ADDRESS
     msg.set_content("本日の海外投資ニュースのリサーチ結果を添付します。\n\n※このメールはGitHub Actionsまたはローカル環境から自動送信されています。")
@@ -234,38 +231,28 @@ def fetch_and_process_news():
         print("Stopping process: Could not find any trending videos.")
         return
         
-    video_info = None
-    transcript_text = None
-    
-    print("2. Looking for a video with an English transcript...")
-    for item in videos:
-        current_info = {
-            "video_id": item["id"]["videoId"],
-            "title": item["snippet"]["title"],
-            "channel": item["snippet"]["channelTitle"],
-            "description": item["snippet"]["description"],
-            "published_at": item["snippet"]["publishedAt"]
-        }
+    print("2. Fetching transcripts and preparing data for Top 10 videos...")
+    videos_context = ""
+    for idx, item in enumerate(videos, 1):
+        video_id = item["id"]["videoId"]
+        title = item["snippet"]["title"]
+        channel = item["snippet"]["channelTitle"]
+        description = item["snippet"]["description"]
         
-        safe_title = current_info['title'].encode('cp932', 'replace').decode('cp932')
-        safe_channel = current_info['channel'].encode('cp932', 'replace').decode('cp932')
-        print(f"-> Trying video: {safe_title} by {safe_channel}")
+        safe_title = title.encode('cp932', 'replace').decode('cp932')
+        print(f"-> Processing Rank {idx}: {safe_title}")
         
-        current_transcript = get_video_transcript(current_info['video_id'])
-        if current_transcript:
-            print(f"-> Successfully fetched English transcript!")
-            video_info = current_info
-            transcript_text = current_transcript
-            break
-        else:
-            print("-> Skipped (transcript unavailable or not in English)")
+        transcript_text = get_video_transcript(video_id)
+        if not transcript_text:
+            transcript_text = "トランスクリプトなし（概要: " + description[:500] + "）"
             
-    if not video_info or not transcript_text:
-        print("Stopping process: Could not fetch video transcript for any of the top videos.")
-        return
+        videos_context += f"【第{idx}位】\n"
+        videos_context += f"タイトル: {title}\n"
+        videos_context += f"チャンネル名: {channel}\n"
+        videos_context += f"内容/トランスクリプト: {transcript_text}\n\n"
         
-    print("3. Generating ripple effect report using Groq...")
-    report_text = generate_ripple_effect_report(client, video_info, transcript_text)
+    print("3. Generating top 10 summary report using Groq...")
+    report_text = generate_top10_report(client, videos_context)
     
     print("4. Generating 15-character filename summary...")
     summary = generate_filename_summary(client, report_text)

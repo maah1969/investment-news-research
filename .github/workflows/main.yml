@@ -1,6 +1,8 @@
 name: Daily News Research
 
 on:
+  schedule:
+    - cron: '30 22 * * *' # 7:30 AM JST
   workflow_dispatch:
 
 jobs:
