@@ -42,7 +42,7 @@ def fetch_top_trending_investment_videos():
         search_response = youtube.search().list(
             q="investing OR stock market OR finance news",
             part="id,snippet",
-            maxResults=10,
+            maxResults=50,
             order="viewCount",
             publishedAfter=published_after,
             relevanceLanguage="en",
@@ -87,26 +87,25 @@ def generate_top10_report(client, videos_context):
         return "動画データが取得できなかったため、レポート生成をスキップしました。"
         
     prompt = f"""
-あなたは優秀な証券アナリストです。以下の海外の最新投資YouTube動画トップ10の内容（タイトル、説明文、英語トランスクリプトの抜粋）を読み、アクセスランキング順にそれぞれ日本語で詳細に要約したレポートを作成してください。
+あなたは優秀な証券アナリストです。以下の海外の最新投資YouTube動画について、アクセス数上位から情報を取得できたトップ10のトランスクリプト（要約対象）を読み、それぞれ日本語で詳細に要約したレポートを作成してください。
 
 【重要な指示】
-1. トランスクリプト情報が不足しており、「具体的な内容」や「専門家・配信者の見解」が読み取れない動画については、レポートへの記載を一切行わず、完全に除外（スキップ）してください。
-2. 要約を作成する動画については、内容を丁寧に拾い上げ、要約の文章量を以前の3倍程度（1動画あたり300〜400文字程度）に詳細に膨らませてください。「具体的な数値」「登場した銘柄名」「市場の背景」「配信者の主張の根拠」などをしっかり盛り込み、読み応えのある構成にしてください。
-3. 「風が吹けば桶屋が儲かる」のような独自の将来予測や独自の波及効果の分析は絶対に含めないでください。あくまで動画内で語られている内容のみを詳細に要約してください。
+1. 各動画の内容を丁寧に拾い上げ、要約の文章量を1動画あたり300〜400文字程度と詳細に膨らませてください。「具体的な数値」「登場した銘柄名」「市場の背景」「配信者の主張の根拠」などをしっかり盛り込み、読み応えのある構成にしてください。
+2. 「風が吹けば桶屋が儲かる」のような独自の将来予測や市場への波及効果の分析は絶対に含めず、あくまで動画内で語られている内容のみを詳細に要約してください。
 
-【動画データ（TOP 10候補）】
+【動画データ（TOP 10）】
 {videos_context}
 
 【レポートのフォーマット】
-# 英語圏 投資系YouTube動画 詳細要約レポート
+# 注目トピック　TOP１０
 
-## 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
-（動画の詳細な要約：情報が十分に読み取れる動画のみをピックアップし、約300〜400文字のボリュームで充実させて記述）
+## 注目トピック 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
+（動画の詳細な要約：約300〜400文字のボリュームで充実させて記述）
 
-## 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
+## 注目トピック 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
 （動画の詳細な要約...同様に記載）
 
-...（以下、同様に情報が不明瞭なものを除外した上でリストアップしてください）
+...（以下、第10位までリストアップしてください）
 """
     
     try:
@@ -231,25 +230,36 @@ def fetch_and_process_news():
         print("Stopping process: Could not find any trending videos.")
         return
         
-    print("2. Fetching transcripts and preparing data for Top 10 videos...")
+    print("2. Fetching transcripts and filtering for exactly 10 valid videos...")
     videos_context = ""
+    valid_count = 0
+    
     for idx, item in enumerate(videos, 1):
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
         channel = item["snippet"]["channelTitle"]
-        description = item["snippet"]["description"]
         
         safe_title = title.encode('cp932', 'replace').decode('cp932')
-        print(f"-> Processing Rank {idx}: {safe_title}")
+        print(f"-> Checking original Rank {idx}: {safe_title}")
         
         transcript_text = get_video_transcript(video_id)
         if not transcript_text:
-            transcript_text = "トランスクリプトなし（概要: " + description[:500] + "）"
+            print("   -> No transcript found. Skipping.")
+            continue
             
-        videos_context += f"【第{idx}位】\n"
+        valid_count += 1
+        videos_context += f"【抽出第{valid_count}位 (全体アクセス順位: {idx}位)】\n"
         videos_context += f"タイトル: {title}\n"
         videos_context += f"チャンネル名: {channel}\n"
         videos_context += f"内容/トランスクリプト: {transcript_text}\n\n"
+        
+        if valid_count >= 10:
+            print("-> Successfully collected 10 videos with transcripts.")
+            break
+            
+    if valid_count == 0:
+        print("Stopping process: Could not find any videos with valid transcripts.")
+        return
         
     print("3. Generating top 10 summary report using Groq...")
     report_text = generate_top10_report(client, videos_context)
