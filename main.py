@@ -40,12 +40,13 @@ def fetch_top_trending_investment_videos():
     
     try:
         search_response = youtube.search().list(
-            q="investing OR stock market OR finance news",
+            q="stock market investing Wall Street finance earnings",
             part="id,snippet",
             maxResults=50,
             order="viewCount",
             publishedAfter=published_after,
             relevanceLanguage="en",
+            regionCode="US",
             type="video"
         ).execute()
 
@@ -62,68 +63,76 @@ def fetch_top_trending_investment_videos():
 def get_video_transcript(video_id):
     """Retrieve the English transcript for a given YouTube video ID."""
     try:
-        # Try to get English transcript
         transcript_list = YouTubeTranscriptApi().list(video_id)
-        transcript = transcript_list.find_transcript(['en'])
+        transcript = None
+
+        # Step1: 英語（手動・自動生成・地域バリアント）を優先的に探す
+        for lang in ['en', 'en-US', 'en-GB', 'en-AU', 'en-CA']:
+            try:
+                transcript = transcript_list.find_transcript([lang])
+                break
+            except Exception:
+                continue
+
+        # Step2: 英語が見つからない場合、他言語を英語に翻訳して取得
+        if transcript is None:
+            try:
+                available = transcript_list._transcripts
+                if available:
+                    first_lang = next(iter(available))
+                    transcript = transcript_list.find_transcript([first_lang]).translate('en')
+                    print(f"   -> No native English transcript. Using translated version from '{first_lang}'.")
+            except Exception:
+                pass
+
+        if transcript is None:
+            return None
+
         fetched_transcript = transcript.fetch()
-        
-        # Combine text from all transcript chunks
         full_text = " ".join([snippet.text for snippet in fetched_transcript.snippets])
-        
-        # Limit the transcript length strictly to avoid exceeding Groq Llama 3 API token limits when batching multiple videos
-        max_chars = 3000 
+
+        max_chars = 10000
         if len(full_text) > max_chars:
             print(f"Transcript too long ({len(full_text)} chars). Truncating to {max_chars} chars.")
             full_text = full_text[:max_chars] + "\n...[Transcript Truncated]..."
-            
+
         return full_text
     except Exception as e:
         print(f"Error fetching transcript for video {video_id}: {e}")
         return None
 
-def generate_top10_report(client, videos_context):
-    """Generate a top 10 YouTube video summary report using Groq."""
-    if not videos_context:
-        return "動画データが取得できなかったため、レポート生成をスキップしました。"
-        
+def generate_single_video_summary(client, rank, title, channel, transcript):
+    """Generate a detailed 1000-character summary for a single video."""
     prompt = f"""
-あなたは優秀な証券アナリストです。以下の海外の最新投資YouTube動画について、アクセス数上位から情報を取得できたトップ10のトランスクリプト（要約対象）を読み、それぞれ日本語で詳細に要約したレポートを作成してください。
+あなたは優秀な証券アナリストです。以下の海外の最新投資YouTube動画のトランスクリプトを読み、日本語で詳細に要約してください。
 
 【重要な指示】
-1. 各動画の内容を丁寧に拾い上げ、要約の文章量を1動画あたり300〜400文字程度と詳細に膨らませてください。「具体的な数値」「登場した銘柄名」「市場の背景」「配信者の主張の根拠」などをしっかり盛り込み、読み応えのある構成にしてください。
+1. この動画１本に対して、要約の文章量が「約1000文字程度」になるように、非常に詳細に解説を展開してください。「具体的な数値」「登場した銘柄名」「市場の背景」「配信者の主張の根拠」などをしっかり盛り込み、読み応えのある構成にしてください。
 2. 「風が吹けば桶屋が儲かる」のような独自の将来予測や市場への波及効果の分析は絶対に含めず、あくまで動画内で語られている内容のみを詳細に要約してください。
 
-【動画データ（TOP 10）】
-{videos_context}
+【対象動画情報】
+タイトル: {title}
+チャンネル名: {channel}
+トランスクリプト: {transcript}
 
-【レポートのフォーマット】
-# 注目トピック　TOP１０
+【出力フォーマット】
+以下の形式で直接出力してください。その他の挨拶や前置きは一切不要です。（※見出しのフォーマットは厳守）
 
-## 注目トピック 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
-（動画の詳細な要約：約300〜400文字のボリュームで充実させて記述）
-
-## 注目トピック 第〇位: [動画タイトル] (チャンネル名: [チャンネル名])
-（動画の詳細な要約...同様に記載）
-
-...（以下、第10位までリストアップしてください）
+## 注目トピック 第{rank}位: {title} (チャンネル名: {channel})
+（ここに約1000文字の非常に詳細な要約を記述）
 """
     
     try:
-        # Use Llama 3 70B model for fast generation
         chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+            messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
             temperature=0.4,
+            max_tokens=2048,
         )
-        return chat_completion.choices[0].message.content
+        return chat_completion.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Error generating report with Groq: {e}")
-        return f"レポート生成中にエラーが発生しました。\nエラー詳細: {e}"
+        print(f"Error generating summary for rank {rank}: {e}")
+        return f"## 注目トピック 第{rank}位: {title} (チャンネル名: {channel})\n（要約生成中にエラーが発生しました: {e}）"
 
 def generate_filename_summary(client, text_content):
     """Generate a 15-character summary for the filename."""
@@ -231,7 +240,7 @@ def fetch_and_process_news():
         return
         
     print("2. Fetching transcripts and filtering for exactly 10 valid videos...")
-    videos_context = ""
+    collected_videos = []
     valid_count = 0
     
     for idx, item in enumerate(videos, 1):
@@ -248,10 +257,12 @@ def fetch_and_process_news():
             continue
             
         valid_count += 1
-        videos_context += f"【抽出第{valid_count}位 (全体アクセス順位: {idx}位)】\n"
-        videos_context += f"タイトル: {title}\n"
-        videos_context += f"チャンネル名: {channel}\n"
-        videos_context += f"内容/トランスクリプト: {transcript_text}\n\n"
+        collected_videos.append({
+            "rank": valid_count,
+            "title": title,
+            "channel": channel,
+            "transcript": transcript_text
+        })
         
         if valid_count >= 10:
             print("-> Successfully collected 10 videos with transcripts.")
@@ -261,8 +272,14 @@ def fetch_and_process_news():
         print("Stopping process: Could not find any videos with valid transcripts.")
         return
         
-    print("3. Generating top 10 summary report using Groq...")
-    report_text = generate_top10_report(client, videos_context)
+    print("3. Generating detailed 1000-char summary for each video using Groq...")
+    import time
+    report_text = "# 注目トピック　TOP１０\n\n"
+    for v in collected_videos:
+        print(f"   -> Summarizing Rank {v['rank']}: {v['title'].encode('cp932', 'replace').decode('cp932')}")
+        summary_text = generate_single_video_summary(client, v['rank'], v['title'], v['channel'], v['transcript'])
+        report_text += summary_text + "\n\n"
+        time.sleep(2) # Small delay to avoid API rate limits
     
     print("4. Generating 15-character filename summary...")
     summary = generate_filename_summary(client, report_text)

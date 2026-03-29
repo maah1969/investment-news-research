@@ -2,6 +2,8 @@ name: Daily News Research
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 20 * * *'  # 毎朝 5:00 JST (UTC 20:00)
 
 jobs:
   research:
