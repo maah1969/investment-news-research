@@ -222,17 +222,9 @@ def fetch_and_process_news():
     jst_time = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
     date_str = jst_time.strftime("%Y%m%d")
     
-    # Target path as requested for output
-    target_dir = os.path.join("G:\\", "マイドライブ", "Antigravity", "海外投資記事", "リサーチ")
-    if not os.path.exists(target_dir):
-        # Using a relative/local fallback if the exact GDrive path doesn't exist in CI environment
-        try:
-            os.makedirs(target_dir, exist_ok=True)
-            print(f"Created target directory: {target_dir}")
-        except Exception as e:
-            print(f"Could not create Google Drive directory. Using local 'output' folder instead.")
-            target_dir = "output"
-            os.makedirs(target_dir, exist_ok=True)
+    # Save output to local 'output' folder
+    target_dir = "output"
+    os.makedirs(target_dir, exist_ok=True)
 
     print(f"[{jst_time}] Starting YouTube video research and plot generation...")
     
