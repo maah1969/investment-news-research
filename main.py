@@ -60,8 +60,8 @@ def fetch_top_trending_investment_videos():
         print(f"Error fetching YouTube data: {e}")
         return None
 
-def get_video_transcript(video_id):
-    """Retrieve the English transcript for a given YouTube video ID."""
+def get_video_content(video_id, description_fallback=""):
+    """Retrieve the English transcript for a video. Falls back to description if blocked."""
     try:
         transcript_list = YouTubeTranscriptApi().list(video_id)
         transcript = None
@@ -86,20 +86,28 @@ def get_video_transcript(video_id):
                 pass
 
         if transcript is None:
-            return None
+            raise Exception("No transcript found")
 
         fetched_transcript = transcript.fetch()
         full_text = " ".join([snippet.text for snippet in fetched_transcript.snippets])
+        source = "transcript"
 
-        max_chars = 10000
-        if len(full_text) > max_chars:
-            print(f"Transcript too long ({len(full_text)} chars). Truncating to {max_chars} chars.")
-            full_text = full_text[:max_chars] + "\n...[Transcript Truncated]..."
-
-        return full_text
     except Exception as e:
-        print(f"Error fetching transcript for video {video_id}: {e}")
-        return None
+        # トランスクリプト取得失敗 → 説明文にフォールバック
+        if description_fallback and description_fallback.strip():
+            print(f"   -> Transcript unavailable ({type(e).__name__}). Falling back to video description.")
+            full_text = description_fallback.strip()
+            source = "description"
+        else:
+            print(f"   -> Transcript and description both unavailable. Skipping.")
+            return None
+
+    max_chars = 10000
+    if len(full_text) > max_chars:
+        full_text = full_text[:max_chars] + "\n...[Content Truncated]..."
+
+    print(f"   -> Content source: {source} ({len(full_text)} chars)")
+    return full_text
 
 def generate_single_video_summary(client, rank, title, channel, transcript):
     """Generate a detailed 1000-character summary for a single video."""
@@ -247,13 +255,14 @@ def fetch_and_process_news():
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
         channel = item["snippet"]["channelTitle"]
+        description = item["snippet"].get("description", "")
         
         safe_title = title.encode('cp932', 'replace').decode('cp932')
         print(f"-> Checking original Rank {idx}: {safe_title}")
         
-        transcript_text = get_video_transcript(video_id)
-        if not transcript_text:
-            print("   -> No transcript found. Skipping.")
+        content_text = get_video_content(video_id, description_fallback=description)
+        if not content_text:
+            print("   -> No usable content found. Skipping.")
             continue
             
         valid_count += 1
@@ -261,11 +270,11 @@ def fetch_and_process_news():
             "rank": valid_count,
             "title": title,
             "channel": channel,
-            "transcript": transcript_text
+            "transcript": content_text
         })
         
         if valid_count >= 10:
-            print("-> Successfully collected 10 videos with transcripts.")
+            print("-> Successfully collected 10 videos with content.")
             break
             
     if valid_count == 0:
