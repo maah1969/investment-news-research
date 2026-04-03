@@ -9,18 +9,28 @@ from email.message import EmailMessage
 from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
 
-# Load environment variables
-load_dotenv()
+# Load environment variables with explicit encoding to handle potential UTF-8 BOM issue
+if os.path.exists(".env"):
+    load_dotenv(".env", encoding='utf-8-sig')
+else:
+    load_dotenv()
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+# Helper to get and clean environment variables (strip whitespace/BOM just in case)
+def get_env_var(name, default=None):
+    val = os.getenv(name, default)
+    if val and isinstance(val, str):
+        return val.strip().replace('\ufeff', '')
+    return val
+
+YOUTUBE_API_KEY = get_env_var("YOUTUBE_API_KEY")
+GROQ_API_KEY = get_env_var("GROQ_API_KEY")
+GMAIL_ADDRESS = get_env_var("GMAIL_ADDRESS")
+GMAIL_APP_PASSWORD = get_env_var("GMAIL_APP_PASSWORD")
 
 def get_groq_client():
     """Get the Groq API client."""
     if not GROQ_API_KEY:
-        print("Error: GROQ_API_KEY environment variable not set.")
+        print(f"Error: GROQ_API_KEY environment variable not set. (Current list: {list(os.environ.keys())[:5]}...)")
         return None
     return Groq(api_key=GROQ_API_KEY)
         

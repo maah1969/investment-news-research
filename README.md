@@ -142,6 +142,7 @@ Gmail でメール添付送信
 investment-news-research/
 ├── main.py                  # メインスクリプト（全処理を含む）
 ├── requirements.txt         # Pythonライブラリの依存関係
+├── .env.example             # 環境変数のサンプル（GitHub共有用）
 ├── .env                     # ローカル用の環境変数（Gitignore対象）
 ├── run_research.bat         # ローカル実行用バッチファイル
 ├── setup_task.ps1           # Windowsタスクスケジューラ設定スクリプト
