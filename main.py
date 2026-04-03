@@ -222,8 +222,8 @@ def fetch_and_process_news():
     jst_time = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
     date_str = jst_time.strftime("%Y%m%d")
     
-    # Save output to local 'output' folder
-    target_dir = "output"
+    # Save output to specified directory or local 'output' folder
+    target_dir = os.getenv("RESEARCH_OUTPUT_DIR", "output")
     os.makedirs(target_dir, exist_ok=True)
 
     print(f"[{jst_time}] Starting YouTube video research and plot generation...")
