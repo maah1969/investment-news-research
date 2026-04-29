@@ -1,4 +1,5 @@
 import os
+import time
 import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -196,7 +197,7 @@ def save_as_docx(report_text, filepath):
     doc.save(filepath)
 
 def send_email_with_attachment(filepath, filename):
-    """Send the generated report via email."""
+    """Send the generated report via email. Retries up to 3 times on failure."""
     if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
         print("Warning: GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set. Skipping email.")
         return
@@ -216,14 +217,28 @@ def send_email_with_attachment(filepath, filename):
                 subtype='vnd.openxmlformats-officedocument.wordprocessingml.document', 
                 filename=filename
             )
-        
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            smtp.send_message(msg)
-            
-        print("-> Successfully sent email with attached report!")
     except Exception as e:
-        print(f"Error sending email: {e}")
+        print(f"Error reading file for attachment: {e}")
+        return
+
+    import time
+    max_retries = 3
+    retry_wait = 30  # seconds
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                smtp.send_message(msg)
+            print("-> Successfully sent email with attached report!")
+            return
+        except Exception as e:
+            print(f"Error sending email (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                print(f"   -> Retrying in {retry_wait} seconds...")
+                time.sleep(retry_wait)
+            else:
+                print("   -> All retry attempts failed. Email was not sent.")
 
 def fetch_and_process_news():
     """
@@ -284,7 +299,6 @@ def fetch_and_process_news():
         return
         
     print("3. Generating detailed 1000-char summary for each video using Groq...")
-    import time
     report_text = "# 注目トピック　TOP１０\n\n"
     for v in collected_videos:
         print(f"   -> Summarizing Rank {v['rank']}: {v['title'].encode('cp932', 'replace').decode('cp932')}")
